@@ -1,0 +1,126 @@
+---
+title: "DBSCAN"
+output: html_document
+date: "2023-12-05"
+---
+
+**Primary works**
+
+```{r primary works }
+# clearing the 
+rm(list = ls())
+# adding the libraries
+library(USpopcenters); library(dplyr); library(tidyverse); library(ggplot2); library(readr)
+library(fpc); library(dbscan)
+# getting library from github
+if(!require(devtools)) install.packages("devtools")
+devtools::install_github("kassambara/factoextra")
+library(factoextra)
+# adding the centroids (Lat Long) of the block groups
+center = tract2020
+# adding the data
+data = read_csv(file = "/Users/jf42564/Desktop/tract_RAPT_blackouts.csv")
+data <- data[data$RPL_THEMES != -999, ]
+data <- data[data$outage_count_per10k > 0, ]
+data
+```
+
+**Adding Centroids Columns!**
+
+```{r merging the data with centroids}
+# creating GEOID variable
+center = center %>%  mutate(GEOID = paste0(STATEFP, COUNTYFP, TRACTCE))
+# changing the GEOID to numeric
+center <- center %>%  mutate(across(c(GEOID), as.numeric))
+# filtering center only for Washington
+center = center %>% filter(STATEFP==53)
+# removing additional variables from center
+center = center %>% select(c(POPULATION,LATITUDE,LONGITUDE,GEOID))
+# left joining the centers to data
+data = left_join(data, center, by="GEOID")
+# keeping only variables want to be used in clustering analysis
+data_cluster = data %>% select(INTPTLAT,INTPTLON,Total_Population,org_per_10k,percent_inactive_voters,outage_count_per10k,meter_hours_out_per10k,RPL_THEMES) %>% scale()
+# weighting the social capital, social vulnerability, and outage
+weights = c(0, 0, 0, 1.2, 1.2, 0.8, 1.4, 1.4)
+# making the weighted data_clustered
+data_cluster = data_cluster * weights
+data_cluster <- na.omit(data_cluster)
+```
+
+**Performing the Clustering Analysis** From now on, we try to perform Density based clustering algorithm. We first need to find the optimal eps.
+
+```{r performing spatial clustering}
+# optimal eps using KNN distplot
+
+kNNdistplot(data_cluster, k = 3)
+abline(h = 2, lty = 2)
+kNNdistplot(data_cluster, k = 4)
+abline(h = 2, lty = 2)
+kNNdistplot(data_cluster, k = 5)
+abline(h = 2, lty = 2)
+kNNdistplot(data_cluster, k = 6)
+abline(h = 2, lty = 2)
+
+```
+
+**DBSCAN Algorithm**
+
+```{r Spatial Clustering Method}
+set.seed(1234)
+# hyper parameters
+eps = 1.5
+# perfroming the DBSCAN algorithm with different MinPts
+f_3 = fpc::dbscan(data_cluster, eps = eps, MinPts = 3); print("F with min 3 points:")
+f_3
+f_4 = fpc::dbscan(data_cluster, eps = eps, MinPts = 4); print("F with min 4 points:")
+f_4
+f_5 = fpc::dbscan(data_cluster, eps = eps, MinPts = 5); print("F with min 5 points:")
+f_5
+f_6 = fpc::dbscan(data_cluster, eps = eps, MinPts = 6); print("F with min 6 points:")
+f_6
+
+```
+
+**Plotting the Clusters**
+
+```{r Cluster Vis.}
+# Cluster Visualization
+fviz_cluster(f_3, data_cluster, geom = "point")
+
+fviz_cluster(f_4, data_cluster, geom = "point")
+
+fviz_cluster(f_5, data_cluster, geom = "point")
+
+fviz_cluster(f_6, data_cluster, geom = "point")
+```
+
+**Adding to the main Data and Plotting**
+
+```{r plotting on the outages and Social Capital}
+# extracting the results from the list
+DBSCAN = f_5[["cluster"]]
+# adding to the main data
+data$DBSCAN = DBSCAN
+# plotting by the Social Vulnerability and Outage Count 
+ggplot(data, aes(meter_hours_out_per10k, RPL_THEMES, color = factor(DBSCAN))) +
+  geom_point() +
+  labs(title = "Scatter Plot by Cluster", x = "Meter-Hours Per 10k", y = "Social Vulnerability") +
+  scale_color_discrete(name = "Cluster")
+# plotting by the Social Vulnerability and Social Capital
+ggplot(data, aes(org_per_10k, RPL_THEMES, color = factor(DBSCAN))) +
+  geom_point() +
+  labs(title = "Scatter Plot by Cluster", x = "Social Capital Orgs Per 10k", y = "Social Vulnerability") +
+  scale_color_discrete(name = "Cluster")
+# plotting by the Social Capital and Outage Count 
+ggplot(data, aes(meter_hours_out_per10k, org_per_10k, color = factor(DBSCAN))) +
+  geom_point() +
+  labs(title = "Scatter Plot by Cluster", x = "Meter-Hours Per 10k", y = "Social Capital") +
+  scale_color_discrete(name = "Cluster")
+```
+
+**Saving the Data**
+
+```{r saving the new dataset}
+# saving the data
+write_csv(data, "Clustered_Data_DBSCAN.csv")
+```
